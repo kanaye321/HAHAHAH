@@ -33,6 +33,28 @@ export async function runMigrations() {
   try {
     console.log("🔄 Starting database migration...");
 
+    // Create users table FIRST
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        password TEXT NOT NULL,
+        first_name TEXT,
+        last_name TEXT,
+        email TEXT UNIQUE,
+        is_admin BOOLEAN DEFAULT FALSE,
+        department TEXT,
+        role_id INTEGER,
+        mfa_secret TEXT,
+        mfa_enabled BOOLEAN DEFAULT FALSE,
+        force_password_change BOOLEAN DEFAULT FALSE,
+        permissions JSONB DEFAULT '{"assets": {"view": true, "edit": false, "add": false}, "components": {"view": true, "edit": false, "add": false}, "accessories": {"view": true, "edit": false, "add": false}, "consumables": {"view": true, "edit": false, "add": false}, "licenses": {"view": true, "edit": false, "add": false}, "users": {"view": false, "edit": false, "add": false}, "reports": {"view": true, "edit": false, "add": false}, "vmMonitoring": {"view": true, "edit": false, "add": false}, "networkDiscovery": {"view": true, "edit": false, "add": false}, "bitlockerKeys": {"view": false, "edit": false, "add": false}, "admin": {"view": false, "edit": false, "add": false}}'::jsonb,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log("✅ Users table verified");
+
     // Create IAM Accounts table
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS iam_accounts (
@@ -54,479 +76,458 @@ export async function runMigrations() {
         UNIQUE(knox_id, resource_type, project)
       )
     `);
-    console.log("✅ IAM Accounts table created/verified");
+    console.log("✅ IAM Accounts table verified");
 
-    // Ensure name and user_knox_id columns exist for existing tables
-    if (await tableExists('iam_accounts')) {
-      if (!(await columnExists('iam_accounts', 'name'))) {
-        await addColumn('iam_accounts', 'name', 'TEXT');
-        console.log('✅ Added name column to iam_accounts');
-      }
-      if (!(await columnExists('iam_accounts', 'user_knox_id'))) {
-        await addColumn('iam_accounts', 'user_knox_id', 'TEXT');
-        console.log('✅ Added user_knox_id column to iam_accounts');
-      }
-    }
-
-    // Create IAM Account Approval History table
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS iam_account_approval_history (
-        id SERIAL PRIMARY KEY,
-        iam_account_id INTEGER NOT NULL REFERENCES iam_accounts(id) ON DELETE CASCADE,
-        approval_number TEXT NOT NULL,
-        duration TEXT,
-        action TEXT NOT NULL,
-        acted_by TEXT NOT NULL,
-        acted_at TIMESTAMP DEFAULT NOW() NOT NULL
-      );
-    `);
-    console.log("✅ IAM Account Approval History table created/verified");
-
-    // Create Azure Inventory table
-    if (!(await tableExists('azure_inventory'))) {
-      await db.execute(sql`
-        CREATE TABLE azure_inventory (
-          id SERIAL PRIMARY KEY,
-          name TEXT NOT NULL,
-          type TEXT NOT NULL,
-          resource_group TEXT NOT NULL,
-          location TEXT NOT NULL,
-          subscriptions TEXT,
-          status TEXT NOT NULL DEFAULT 'active',
-          remarks TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-        )
-      `);
-      console.log("✅ Azure Inventory table created");
-    } else {
-      console.log("✅ Azure Inventory table exists - verifying columns");
-      const azureColumns = [
-        ['name', 'TEXT NOT NULL'],
-        ['type', 'TEXT NOT NULL'],
-        ['resource_group', 'TEXT NOT NULL'],
-        ['location', 'TEXT NOT NULL'],
-        ['subscriptions', 'TEXT'],
-        ['status', 'TEXT NOT NULL DEFAULT \'active\''],
-        ['remarks', 'TEXT'],
-        ['created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL'],
-        ['updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL']
-      ];
-
-      for (const [columnName, definition] of azureColumns) {
-        if (!(await columnExists('azure_inventory', columnName))) {
-          await addColumn('azure_inventory', columnName, definition);
-        }
-      }
-    }
-
-    // Create GCP Inventory table
-    if (!(await tableExists('gcp_inventory'))) {
-      await db.execute(sql`
-        CREATE TABLE gcp_inventory (
-          id SERIAL PRIMARY KEY,
-          name TEXT NOT NULL,
-          resource_type TEXT NOT NULL,
-          project_id TEXT NOT NULL,
-          display_name TEXT NOT NULL,
-          location TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'active',
-          remarks TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-        )
-      `);
-      console.log("✅ GCP Inventory table created");
-    } else {
-      console.log("✅ GCP Inventory table exists - verifying columns");
-      const gcpColumns = [
-        ['name', 'TEXT NOT NULL'],
-        ['resource_type', 'TEXT NOT NULL'],
-        ['project_id', 'TEXT NOT NULL'],
-        ['display_name', 'TEXT NOT NULL'],
-        ['location', 'TEXT NOT NULL'],
-        ['status', 'TEXT NOT NULL DEFAULT \'active\''],
-        ['remarks', 'TEXT'],
-        ['created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL'],
-        ['updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL']
-      ];
-
-      for (const [columnName, definition] of gcpColumns) {
-        if (!(await columnExists('gcp_inventory', columnName))) {
-          await addColumn('gcp_inventory', columnName, definition);
-        }
-      }
-    }
-
-    // Create Azure Historical Data table
-    if (!(await tableExists('azure_historical_data'))) {
-      await db.execute(sql`
-        CREATE TABLE azure_historical_data (
-          id SERIAL PRIMARY KEY,
-          resource_id INTEGER,
-          name TEXT NOT NULL,
-          type TEXT NOT NULL,
-          resource_group TEXT NOT NULL,
-          location TEXT NOT NULL,
-          subscriptions TEXT NOT NULL,
-          status TEXT NOT NULL,
-          remarks TEXT,
-          change_type TEXT NOT NULL,
-          month_year TEXT NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-        )
-      `);
-      console.log("✅ Azure Historical Data table created");
-    }
-
-    // Create GCP Historical Data table
-    if (!(await tableExists('gcp_historical_data'))) {
-      await db.execute(sql`
-        CREATE TABLE gcp_historical_data (
-          id SERIAL PRIMARY KEY,
-          resource_id INTEGER,
-          name TEXT NOT NULL,
-          resource_type TEXT NOT NULL,
-          project_id TEXT NOT NULL,
-          display_name TEXT NOT NULL,
-          location TEXT NOT NULL,
-          status TEXT NOT NULL,
-          remarks TEXT,
-          change_type TEXT NOT NULL,
-          month_year TEXT NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-        )
-      `);
-      console.log("✅ GCP Historical Data table created");
-    }
-
-    // Create AWS Inventory table
-    if (!(await tableExists('aws_inventory'))) {
-      await db.execute(sql`
-        CREATE TABLE aws_inventory (
-          id SERIAL PRIMARY KEY,
-          identifier TEXT NOT NULL,
-          service TEXT NOT NULL,
-          type TEXT NOT NULL,
-          region TEXT NOT NULL,
-          account_name TEXT NOT NULL,
-          account_id TEXT NOT NULL,
-          status TEXT NOT NULL DEFAULT 'active',
-          remarks TEXT,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-        )
-      `);
-      console.log("✅ AWS Inventory table created");
-    } else {
-      console.log("✅ AWS Inventory table exists - verifying columns");
-
-      // Drop name column if it exists
-      if (await columnExists('aws_inventory', 'name')) {
-        await db.execute(sql`ALTER TABLE aws_inventory DROP COLUMN name`);
-        console.log("✅ Removed name column from aws_inventory");
-      }
-
-      const awsColumns = [
-        ['identifier', 'TEXT NOT NULL'],
-        ['service', 'TEXT NOT NULL'],
-        ['type', 'TEXT NOT NULL'],
-        ['region', 'TEXT NOT NULL'],
-        ['account_name', 'TEXT NOT NULL'],
-        ['account_id', 'TEXT NOT NULL'],
-        ['status', 'TEXT NOT NULL DEFAULT \'active\''],
-        ['remarks', 'TEXT'],
-        ['created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL'],
-        ['updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL']
-      ];
-
-      for (const [columnName, definition] of awsColumns) {
-        if (!(await columnExists('aws_inventory', columnName))) {
-          await addColumn('aws_inventory', columnName, definition);
-        }
-      }
-    }
-
-    // Create AWS Historical Data table
-    if (!(await tableExists('aws_historical_data'))) {
-      await db.execute(sql`
-        CREATE TABLE aws_historical_data (
-          id SERIAL PRIMARY KEY,
-          resource_id INTEGER,
-          identifier TEXT NOT NULL,
-          service TEXT NOT NULL,
-          type TEXT NOT NULL,
-          region TEXT NOT NULL,
-          account_name TEXT NOT NULL,
-          account_id TEXT NOT NULL,
-          status TEXT NOT NULL,
-          remarks TEXT,
-          change_type TEXT NOT NULL,
-          month_year TEXT NOT NULL,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-        )
-      `);
-      console.log("✅ AWS Historical Data table created");
-    } else {
-      console.log("✅ AWS Historical Data table exists - verifying columns");
-
-      // Drop name column if it exists
-      if (await columnExists('aws_historical_data', 'name')) {
-        await db.execute(sql`ALTER TABLE aws_historical_data DROP COLUMN name`);
-        console.log("✅ Removed name column from aws_historical_data");
-      }
-    }
-
-    // Create VM approval history table if it doesn't exist
-    const vmApprovalHistoryTableExists = await db.execute(sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'vm_approval_history'
-      );
-    `);
-
-    if (!vmApprovalHistoryTableExists.rows[0]?.exists) {
-      await db.execute(sql`
-        CREATE TABLE vm_approval_history (
-          id SERIAL PRIMARY KEY,
-          vm_id INTEGER NOT NULL REFERENCES vm_inventory(id) ON DELETE CASCADE,
-          old_approval_number TEXT,
-          new_approval_number TEXT,
-          changed_by INTEGER REFERENCES users(id),
-          changed_at TIMESTAMP DEFAULT NOW() NOT NULL,
-          reason TEXT,
-          notes TEXT,
-          created_at TIMESTAMP DEFAULT NOW() NOT NULL
-        )
-      `);
-      console.log("✅ VM approval history table created");
-    } else {
-      console.log("✅ VM approval history table exists");
-    }
-
-    // Create VM inventory table if it doesn't exist
-    const vmInventoryTableExists = await db.execute(sql`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'vm_inventory'
-      );
-    `);
-
-    if (!vmInventoryTableExists.rows[0]?.exists) {
-      await db.execute(sql`
-        CREATE TABLE vm_inventory (
-          id SERIAL PRIMARY KEY,
-
-          -- Core VM Information
-          vm_id TEXT,
-          vm_name TEXT NOT NULL,
-          vm_status TEXT NOT NULL DEFAULT 'Active',
-          vm_ip TEXT,
-          vm_os TEXT,
-          cpu_count INTEGER DEFAULT 0,
-          memory_gb INTEGER DEFAULT 0,
-          disk_capacity_gb INTEGER DEFAULT 0,
-
-          -- Request and Approval Information
-          requestor TEXT,
-          knox_id TEXT,
-          department TEXT,
-          start_date TEXT,
-          end_date TEXT,
-          jira_number TEXT,
-          approval_number TEXT,
-          remarks TEXT,
-
-          -- Legacy compatibility fields
-          internet_access BOOLEAN DEFAULT FALSE,
-          vm_os_version TEXT,
-          hypervisor TEXT,
-          host_name TEXT,
-          host_ip TEXT,
-          host_os TEXT,
-          rack TEXT,
-          deployed_by TEXT,
-          "user" TEXT,
-          jira_ticket TEXT,
-          date_deleted TEXT,
-          guest_os TEXT,
-          power_state TEXT,
-          memory_mb INTEGER,
-          disk_gb INTEGER,
-          ip_address TEXT,
-          mac_address TEXT,
-          vmware_tools TEXT,
-          cluster TEXT,
-          datastore TEXT,
-          status TEXT DEFAULT 'available',
-          assigned_to INTEGER,
-          location TEXT,
-          serial_number TEXT,
-          model TEXT,
-          manufacturer TEXT,
-          purchase_date TEXT,
-          purchase_cost TEXT,
-          created_date TEXT DEFAULT CURRENT_TIMESTAMP,
-          last_modified TEXT DEFAULT CURRENT_TIMESTAMP,
-          notes TEXT
-        )
-      `);
-      console.log("✅ VM inventory table created with all required columns");
-    } else {
-      console.log("✅ VM inventory table exists - verifying columns");
-    }
-
-    // Create Zabbix settings table
-    if (!(await tableExists('zabbix_settings'))) {
-      await db.execute(sql`
-        CREATE TABLE IF NOT EXISTS zabbix_settings (
-          id SERIAL PRIMARY KEY,
-          zabbix_url TEXT,
-          zabbix_api_token TEXT,
-          refresh_interval INTEGER DEFAULT 60,
-          created_at TIMESTAMP DEFAULT NOW(),
-          updated_at TIMESTAMP DEFAULT NOW()
-        )
-      `);
-      console.log("✅ Zabbix settings table created");
-    } else {
-      console.log("✅ Zabbix settings table exists - verifying columns");
-      const zabbixColumns = [
-        ['zabbix_url', 'TEXT'],
-        ['zabbix_api_token', 'TEXT'],
-        ['refresh_interval', 'INTEGER DEFAULT 60'],
-        ['created_at', 'TIMESTAMP DEFAULT NOW()'],
-        ['updated_at', 'TIMESTAMP DEFAULT NOW()']
-      ];
-
-      for (const [columnName, definition] of zabbixColumns) {
-        if (!(await columnExists('zabbix_settings', columnName))) {
-          await addColumn('zabbix_settings', columnName, definition);
-        }
-      }
-    }
-
-    // Final comprehensive table verification - includes all tables
+    // All tables verification loop
     const allTables = [
-      'users', 'assets', 'components', 'accessories', 'consumables', 'licenses',
+      'assets', 'components', 'accessories', 'consumables', 'licenses',
       'license_assignments', 'consumable_assignments', 'activities', 'vm_inventory',
       'vms', 'monitor_inventory', 'bitlocker_keys', 'it_equipment', 'it_equipment_assignments',
       'system_settings', 'zabbix_settings', 'discovered_hosts', 'vm_monitoring',
-      'monitoring_dashboards', 'monitoring_panels', 'monitoring_datasources', 
-      'monitoring_alert_rules', 'monitoring_alerts', 'monitoring_notifications', 'iam_accounts', 
       'vm_approval_history', 'azure_inventory', 'gcp_inventory', 'aws_inventory', 
-      'iam_account_approval_history', 'custom_pages'
+      'custom_pages'
     ];
 
-    console.log("📊 Final comprehensive table verification:");
-    let verifiedTables = 0;
-    let totalRecords = 0;
-
     for (const tableName of allTables) {
-      try {
-        if (await tableExists(tableName)) {
-          const result = await db.execute(sql.raw(`SELECT COUNT(*) as count FROM ${tableName}`));
-          const count = result.rows[0].count;
-          console.log(`   ✅ ${tableName}: ${count} records`);
-          verifiedTables++;
-          totalRecords += parseInt(count);
-        } else {
-          console.log(`   ❌ ${tableName}: Table missing`);
+      if (!(await tableExists(tableName))) {
+        console.log(`   ❌ ${tableName}: Table missing - Attempting to create...`);
+        if (tableName === 'assets') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS assets (
+              id SERIAL PRIMARY KEY,
+              asset_tag TEXT NOT NULL UNIQUE,
+              name TEXT NOT NULL,
+              description TEXT,
+              category TEXT NOT NULL,
+              status TEXT NOT NULL,
+              condition TEXT NOT NULL DEFAULT 'Good',
+              purchase_date TEXT,
+              purchase_cost TEXT,
+              location TEXT,
+              serial_number TEXT,
+              model TEXT,
+              manufacturer TEXT,
+              notes TEXT,
+              knox_id TEXT,
+              ip_address TEXT,
+              mac_address TEXT,
+              os_type TEXT,
+              assigned_to INTEGER REFERENCES users(id),
+              checkout_date TEXT,
+              expected_checkin_date TEXT,
+              finance_updated BOOLEAN DEFAULT FALSE,
+              department TEXT
+            )
+          `);
+        } else if (tableName === 'components') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS components (
+              id SERIAL PRIMARY KEY,
+              name TEXT NOT NULL,
+              type TEXT NOT NULL,
+              category TEXT NOT NULL,
+              quantity INTEGER NOT NULL DEFAULT 0,
+              status TEXT DEFAULT 'available',
+              description TEXT,
+              location TEXT,
+              serial_number TEXT,
+              model TEXT,
+              manufacturer TEXT,
+              purchase_date TEXT,
+              purchase_cost TEXT,
+              warranty_expiry TEXT,
+              assigned_to TEXT,
+              date_released TEXT,
+              date_returned TEXT,
+              released_by TEXT,
+              returned_to TEXT,
+              specifications TEXT,
+              notes TEXT
+            )
+          `);
+        } else if (tableName === 'accessories') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS accessories (
+              id SERIAL PRIMARY KEY,
+              name TEXT NOT NULL,
+              category TEXT NOT NULL,
+              status TEXT NOT NULL,
+              quantity INTEGER NOT NULL DEFAULT 1,
+              description TEXT,
+              location TEXT,
+              serial_number TEXT,
+              model TEXT,
+              manufacturer TEXT,
+              purchase_date TEXT,
+              purchase_cost TEXT,
+              assigned_to INTEGER REFERENCES users(id),
+              knox_id TEXT,
+              date_released TEXT,
+              date_returned TEXT,
+              released_by TEXT,
+              returned_to TEXT,
+              notes TEXT
+            )
+          `);
+        } else if (tableName === 'consumables') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS consumables (
+              id SERIAL PRIMARY KEY,
+              name TEXT NOT NULL,
+              category TEXT NOT NULL,
+              quantity INTEGER NOT NULL DEFAULT 1,
+              status TEXT NOT NULL DEFAULT 'available',
+              location TEXT,
+              model_number TEXT,
+              manufacturer TEXT,
+              purchase_date TEXT,
+              purchase_cost TEXT,
+              notes TEXT
+            )
+          `);
+        } else if (tableName === 'licenses') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS licenses (
+              id SERIAL PRIMARY KEY,
+              name TEXT NOT NULL,
+              key TEXT NOT NULL,
+              seats TEXT,
+              assigned_seats INTEGER DEFAULT 0,
+              company TEXT,
+              manufacturer TEXT,
+              purchase_date TEXT,
+              expiration_date TEXT,
+              purchase_cost TEXT,
+              status TEXT NOT NULL,
+              notes TEXT,
+              assigned_to INTEGER REFERENCES users(id)
+            )
+          `);
+        } else if (tableName === 'license_assignments') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS license_assignments (
+              id SERIAL PRIMARY KEY,
+              license_id INTEGER NOT NULL REFERENCES licenses(id) ON DELETE CASCADE,
+              assigned_to TEXT NOT NULL,
+              notes TEXT,
+              assigned_date TEXT NOT NULL
+            )
+          `);
+        } else if (tableName === 'consumable_assignments') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS consumable_assignments (
+              id SERIAL PRIMARY KEY,
+              consumable_id INTEGER NOT NULL REFERENCES consumables(id) ON DELETE CASCADE,
+              assigned_to TEXT NOT NULL,
+              serial_number TEXT,
+              knox_id TEXT,
+              quantity INTEGER NOT NULL DEFAULT 1,
+              assigned_date TEXT NOT NULL,
+              returned_date TEXT,
+              status TEXT NOT NULL DEFAULT 'assigned',
+              notes TEXT
+            )
+          `);
+        } else if (tableName === 'activities') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS activities (
+              id SERIAL PRIMARY KEY,
+              action TEXT NOT NULL,
+              item_type TEXT NOT NULL,
+              item_id INTEGER NOT NULL,
+              user_id INTEGER REFERENCES users(id),
+              timestamp TEXT NOT NULL,
+              notes TEXT
+            )
+          `);
+        } else if (tableName === 'vms') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS vms (
+              id SERIAL PRIMARY KEY,
+              vm_name TEXT NOT NULL,
+              host_name TEXT NOT NULL,
+              guest_os TEXT NOT NULL,
+              power_state TEXT NOT NULL DEFAULT 'stopped',
+              cpu_count INTEGER DEFAULT 1,
+              memory_mb INTEGER DEFAULT 1024,
+              disk_gb INTEGER DEFAULT 20,
+              ip_address TEXT,
+              mac_address TEXT,
+              vmware_tools TEXT,
+              cluster TEXT,
+              datastore TEXT,
+              status TEXT NOT NULL DEFAULT 'available',
+              assigned_to INTEGER REFERENCES users(id),
+              location TEXT,
+              serial_number TEXT,
+              model TEXT,
+              manufacturer TEXT,
+              purchase_date TEXT,
+              purchase_cost TEXT,
+              department TEXT,
+              description TEXT,
+              created_date TEXT DEFAULT CURRENT_TIMESTAMP,
+              last_modified TEXT DEFAULT CURRENT_TIMESTAMP,
+              notes TEXT
+            )
+          `);
+        } else if (tableName === 'monitor_inventory') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS monitor_inventory (
+              id SERIAL PRIMARY KEY,
+              seat_number TEXT NOT NULL,
+              knox_id TEXT,
+              asset_number TEXT,
+              serial_number TEXT,
+              model TEXT,
+              remarks TEXT,
+              department TEXT,
+              created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+          `);
+        } else if (tableName === 'bitlocker_keys') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS bitlocker_keys (
+              id SERIAL PRIMARY KEY,
+              serial_number TEXT NOT NULL,
+              identifier TEXT NOT NULL,
+              recovery_key TEXT NOT NULL,
+              added_by_user TEXT,
+              date_added TEXT DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+          `);
+        } else if (tableName === 'it_equipment') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS it_equipment (
+              id SERIAL PRIMARY KEY,
+              name TEXT NOT NULL,
+              category TEXT NOT NULL,
+              total_quantity INTEGER,
+              assigned_quantity INTEGER DEFAULT 0,
+              model TEXT,
+              location TEXT,
+              date_acquired TEXT,
+              knox_id TEXT,
+              serial_number TEXT,
+              date_release TEXT,
+              remarks TEXT,
+              status TEXT DEFAULT 'available',
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+          `);
+        } else if (tableName === 'it_equipment_assignments') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS it_equipment_assignments (
+              id SERIAL PRIMARY KEY,
+              equipment_id INTEGER NOT NULL REFERENCES it_equipment(id) ON DELETE CASCADE,
+              assigned_to TEXT NOT NULL,
+              knox_id TEXT,
+              serial_number TEXT,
+              quantity INTEGER NOT NULL DEFAULT 1,
+              assigned_date TEXT NOT NULL,
+              returned_date TEXT,
+              status TEXT NOT NULL DEFAULT 'assigned',
+              notes TEXT
+            )
+          `);
+        } else if (tableName === 'system_settings') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS system_settings (
+              id SERIAL PRIMARY KEY,
+              site_name TEXT DEFAULT 'SRPH-MIS',
+              company_name TEXT DEFAULT 'SRPH',
+              auto_backup BOOLEAN DEFAULT FALSE,
+              auto_optimize BOOLEAN DEFAULT FALSE,
+              backup_time TEXT DEFAULT '03:00',
+              optimize_time TEXT DEFAULT '04:00',
+              retention_days INTEGER DEFAULT 30,
+              email_notifications BOOLEAN DEFAULT TRUE,
+              notify_on_iam_expiration BOOLEAN DEFAULT TRUE,
+              notify_on_vm_expiration BOOLEAN DEFAULT TRUE,
+              session_timeout INTEGER DEFAULT 1800,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+            )
+          `);
+          await db.execute(sql`
+            INSERT INTO system_settings (id, site_name, company_name) 
+            VALUES (1, 'SRPH-MIS', 'SRPH')
+            ON CONFLICT (id) DO NOTHING
+          `);
+        } else if (tableName === 'vm_inventory') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS vm_inventory (
+              id SERIAL PRIMARY KEY,
+              vm_id TEXT,
+              vm_name TEXT NOT NULL,
+              vm_status TEXT NOT NULL DEFAULT 'Active',
+              vm_ip TEXT,
+              vm_os TEXT,
+              cpu_count INTEGER DEFAULT 0,
+              memory_gb INTEGER DEFAULT 0,
+              disk_capacity_gb INTEGER DEFAULT 0,
+              requestor TEXT,
+              knox_id TEXT,
+              department TEXT,
+              start_date TEXT,
+              end_date TEXT,
+              jira_number TEXT,
+              approval_number TEXT,
+              remarks TEXT,
+              internet_access BOOLEAN DEFAULT FALSE,
+              vm_os_version TEXT,
+              hypervisor TEXT,
+              host_name TEXT,
+              host_ip TEXT,
+              host_os TEXT,
+              rack TEXT,
+              deployed_by TEXT,
+              "user" TEXT,
+              jira_ticket TEXT,
+              date_deleted TEXT,
+              guest_os TEXT,
+              power_state TEXT,
+              memory_mb INTEGER,
+              disk_gb INTEGER,
+              ip_address TEXT,
+              mac_address TEXT,
+              vmware_tools TEXT,
+              cluster TEXT,
+              datastore TEXT,
+              status TEXT DEFAULT 'available',
+              assigned_to INTEGER,
+              location TEXT,
+              serial_number TEXT,
+              model TEXT,
+              manufacturer TEXT,
+              purchase_date TEXT,
+              purchase_cost TEXT,
+              created_date TEXT DEFAULT CURRENT_TIMESTAMP,
+              last_modified TEXT DEFAULT CURRENT_TIMESTAMP,
+              notes TEXT
+            )
+          `);
+        } else if (tableName === 'vm_approval_history') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS vm_approval_history (
+              id SERIAL PRIMARY KEY,
+              vm_id INTEGER NOT NULL REFERENCES vm_inventory(id) ON DELETE CASCADE,
+              old_approval_number TEXT,
+              new_approval_number TEXT,
+              changed_by INTEGER REFERENCES users(id),
+              changed_at TIMESTAMP DEFAULT NOW() NOT NULL,
+              reason TEXT,
+              notes TEXT,
+              created_at TIMESTAMP DEFAULT NOW() NOT NULL
+            )
+          `);
+        } else if (tableName === 'azure_inventory') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS azure_inventory (
+              id SERIAL PRIMARY KEY,
+              name TEXT NOT NULL,
+              type TEXT NOT NULL,
+              resource_group TEXT NOT NULL,
+              location TEXT NOT NULL,
+              subscriptions TEXT,
+              status TEXT NOT NULL DEFAULT 'active',
+              remarks TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+            )
+          `);
+        } else if (tableName === 'gcp_inventory') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS gcp_inventory (
+              id SERIAL PRIMARY KEY,
+              name TEXT NOT NULL,
+              resource_type TEXT NOT NULL,
+              project_id TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              location TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              remarks TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+            )
+          `);
+        } else if (tableName === 'aws_inventory') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS aws_inventory (
+              id SERIAL PRIMARY KEY,
+              identifier TEXT NOT NULL,
+              service TEXT NOT NULL,
+              type TEXT NOT NULL,
+              region TEXT NOT NULL,
+              account_name TEXT NOT NULL,
+              account_id TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'active',
+              remarks TEXT,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+            )
+          `);
+        } else if (tableName === 'discovered_hosts') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS discovered_hosts (
+              id SERIAL PRIMARY KEY,
+              hostname TEXT,
+              ip_address TEXT NOT NULL,
+              mac_address TEXT,
+              status TEXT NOT NULL DEFAULT 'new',
+              last_seen TIMESTAMP DEFAULT NOW(),
+              source TEXT NOT NULL DEFAULT 'zabbix',
+              system_info JSON DEFAULT '{}',
+              hardware_details JSON DEFAULT '{}',
+              created_at TIMESTAMP DEFAULT NOW(),
+              updated_at TIMESTAMP DEFAULT NOW()
+            )
+          `);
+        } else if (tableName === 'vm_monitoring') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS vm_monitoring (
+              id SERIAL PRIMARY KEY,
+              vm_id INTEGER NOT NULL,
+              hostname TEXT,
+              ip_address TEXT,
+              status TEXT,
+              cpu_usage REAL,
+              memory_usage REAL,
+              disk_usage REAL,
+              uptime INTEGER,
+              network_status TEXT,
+              os_name TEXT,
+              cpu_cores INTEGER,
+              total_memory BIGINT,
+              total_disk BIGINT
+            )
+          `);
+        } else if (tableName === 'custom_pages') {
+          await db.execute(sql`
+            CREATE TABLE IF NOT EXISTS custom_pages (
+              id SERIAL PRIMARY KEY,
+              name TEXT NOT NULL,
+              slug TEXT NOT NULL UNIQUE,
+              content TEXT,
+              is_published BOOLEAN DEFAULT FALSE,
+              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+          `);
         }
-      } catch (error) {
-        console.log(`   ⚠️ ${tableName}: Error checking - ${error.message}`);
+      }
+
+      if (await tableExists(tableName)) {
+        console.log(`   ✅ ${tableName} verified`);
       }
     }
 
-    // Create or verify system_settings table with all required columns
-    if (!(await tableExists('system_settings'))) {
-      await db.execute(sql`
-        CREATE TABLE system_settings (
-          id SERIAL PRIMARY KEY,
-          site_name TEXT DEFAULT 'SRPH-MIS',
-          company_name TEXT DEFAULT 'SRPH',
-          auto_backup BOOLEAN DEFAULT FALSE,
-          auto_optimize BOOLEAN DEFAULT FALSE,
-          backup_time TEXT DEFAULT '03:00',
-          optimize_time TEXT DEFAULT '04:00',
-          retention_days INTEGER DEFAULT 30,
-          email_notifications BOOLEAN DEFAULT TRUE,
-          notify_on_iam_expiration BOOLEAN DEFAULT TRUE,
-          notify_on_vm_expiration BOOLEAN DEFAULT TRUE,
-          session_timeout INTEGER DEFAULT 1800,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
-        )
-      `);
-
-      // Insert default settings
-      await db.execute(sql`
-        INSERT INTO system_settings (id, site_name, company_name) 
-        VALUES (1, 'SRPH-MIS', 'SRPH')
-        ON CONFLICT (id) DO NOTHING
-      `);
-      console.log('✅ System settings table created with default values');
-    } else {
-      // Ensure all required columns exist
-      const requiredColumns = [
-        ['site_name', 'TEXT DEFAULT \'SRPH-MIS\''],
-        ['company_name', 'TEXT DEFAULT \'SRPH\''],
-        ['auto_backup', 'BOOLEAN DEFAULT FALSE'],
-        ['auto_optimize', 'BOOLEAN DEFAULT FALSE'],
-        ['backup_time', 'TEXT DEFAULT \'03:00\''],
-        ['optimize_time', 'TEXT DEFAULT \'04:00\''],
-        ['retention_days', 'INTEGER DEFAULT 30'],
-        ['email_notifications', 'BOOLEAN DEFAULT TRUE'],
-        ['notify_on_iam_expiration', 'BOOLEAN DEFAULT TRUE'],
-        ['notify_on_vm_expiration', 'BOOLEAN DEFAULT TRUE'],
-        ['session_timeout', 'INTEGER DEFAULT 1800'],
-        ['created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL'],
-        ['updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL']
-      ];
-
-      for (const [columnName, definition] of requiredColumns) {
-        if (!(await columnExists('system_settings', columnName))) {
-          await addColumn('system_settings', columnName, definition);
-        }
-      }
-      console.log('✅ System settings table columns verified');
-    }
-
-    console.log("📁 Backups directory created and configured");
-
-    // Ensure backups directory exists
-    const fs = await import('fs');
-    const path = await import('path');
-    const backupDir = path.join(process.cwd(), 'backups');
-
-    if (!fs.existsSync(backupDir)) {
-      fs.mkdirSync(backupDir, { recursive: true });
-      console.log('📁 Backups directory created at:', backupDir);
-    } else {
-      console.log('📁 Backups directory already exists at:', backupDir);
-    }
-
-    return;
-
-    console.log(`\n🎉 Database verification completed successfully!`);
-    console.log(`📊 Summary: ${verifiedTables}/${allTables.length} tables verified`);
-    console.log(`📈 Total records across all tables: ${totalRecords}`);
-    console.log(`🔄 All missing tables and columns have been created automatically`);
-
-    // Log next steps
-    if (verifiedTables < allTables.length) {
-      console.log(`\n⚠️ Some tables may need manual attention. Check the logs above.`);
-    }
-
-  } catch (error) {
-    console.error("❌ Migration failed:", error);
-    console.error("📍 Error details:", {
-      message: error.message,
-      code: error.code,
-      detail: error.detail
-    });
+    console.log("🎉 Database migration and verification completed successfully!");
+  } catch (error: any) {
+    console.error("❌ Migration failed:", error.message);
     throw error;
   }
 }
