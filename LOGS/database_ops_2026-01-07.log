@@ -1,0 +1,6 @@
+[2026-01-07T07:30:58.350Z] [DATABASE] {
+  "type": "migration",
+  "status": "completed",
+  "details": "Server startup logging test",
+  "timestamp": "2026-01-07T07:30:58.350Z"
+}
