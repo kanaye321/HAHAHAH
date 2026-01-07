@@ -20,7 +20,7 @@ function getEncryptionKey(): Buffer {
     console.warn('║  All PII data will be stored in PLAIN TEXT                     ║');
     console.warn('║                                                                ║');
     console.warn('║  To enable encryption:                                         ║');
-    console.warn('║  1. Go to Tools → Secrets in Replit                           ║');
+    console.warn('║  1. Go to Tools                                                ║');
     console.warn('║  2. Add a new secret named: ENCRYPTION_KEY                     ║');
     console.warn('║  3. Set a strong random value (32+ characters)                 ║');
     console.warn('║  4. Restart your application                                   ║');
@@ -45,17 +45,9 @@ export function encrypt(text: string | null | undefined): string | null {
     return null;
   }
 
-  // If no encryption key is set, return plain text (encryption disabled by default)
+  // If no encryption key is set, do not encrypt.
+  // Return plain text if encryption is disabled.
   if (!process.env.ENCRYPTION_KEY) {
-    // If data is already encrypted (has the encrypted format), decrypt it first
-    if (text.includes(':') && text.split(':').length === 3) {
-      try {
-        return decrypt(text);
-      } catch (error) {
-        // If decryption fails, just return as-is
-        return text;
-      }
-    }
     return text;
   }
 
