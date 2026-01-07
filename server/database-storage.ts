@@ -99,15 +99,15 @@ export class DatabaseStorage implements IStorage {
   async getUser(id: number): Promise<User | undefined> {
     if (!db) throw new Error("Database connection required");
     const [user] = await db.select().from(schema.users).where(eq(schema.users.id, id));
-    // Only decrypt if ENCRYPTION_KEY is set
-    return user ? (process.env.ENCRYPTION_KEY ? decryptFields(user, PII_FIELDS.user) : user) : null;
+    // Decrypt if it looks encrypted, regardless of ENCRYPTION_KEY being set (for legacy data)
+    return user ? decryptFields(user, PII_FIELDS.user) : null;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
     if (!db) throw new Error("Database connection required");
     const [user] = await db.select().from(schema.users).where(eq(schema.users.username, username));
-    // Only decrypt if ENCRYPTION_KEY is set
-    return user ? (process.env.ENCRYPTION_KEY ? decryptFields(user, PII_FIELDS.user) : user) : null;
+    // Decrypt if it looks encrypted, regardless of ENCRYPTION_KEY being set (for legacy data)
+    return user ? decryptFields(user, PII_FIELDS.user) : null;
   }
 
   async createUser(userData: InsertUser) {
